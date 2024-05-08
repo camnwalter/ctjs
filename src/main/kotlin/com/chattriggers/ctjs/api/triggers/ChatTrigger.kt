@@ -24,12 +24,25 @@ class ChatTrigger(method: Any, type: ITriggerType) : Trigger(method, type) {
             is CharSequence -> {
                 val chatCriteria = criteria.toString()
 
-                if ("\n" in chatCriteria)
-                    flags.add(RegexOption.DOT_MATCHES_ALL)
-
                 val replacedCriteria = chatCriteria.replace("\n", "\\n")
-                    .replace(Regex("""\$\{[^*]+?}"""), "(.+?)")
-                    .replace(Regex("""\$\{\*?}"""), "(?:.+?)")
+                    .replace(Regex("""\$\{[^*:{}]+:?([n?]{0,2})}""")) {
+                        if ("n" in it.groupValues[1])
+                            flags.add(RegexOption.DOT_MATCHES_ALL)
+
+                        if ("?" in it.groupValues[1])
+                            "(.+?)"
+                        else
+                            "(.+)"
+                    }
+                    .replace(Regex("""\$\{\*+:?([n?]{0,2})}""")) {
+                        if ("\n" in it.groupValues[1])
+                            flags.add(RegexOption.DOT_MATCHES_ALL)
+
+                        if ("?" in it.groupValues[1])
+                            "(?:.+?)"
+                        else
+                            "(?:.+)"
+                    }
 
                 if ("" != chatCriteria)
                     source = replacedCriteria
@@ -151,10 +164,13 @@ class ChatTrigger(method: Any, type: ITriggerType) : Trigger(method, type) {
      */
     private fun getVariables(chat: String): List<String>? {
         if (usingCriteria && ::criteriaPattern.isInitialized) {
-            if (global)
-                return criteriaPattern.findAll(chat).flatMap {
-                    it.groupValues.drop(1)
-                }.toList().ifEmpty { null }
+            if (global) {
+                val matches = criteriaPattern.findAll(chat).toList()
+                if (matches.isEmpty())
+                    return null
+
+                return matches.flatMap { it.groupValues.drop(1) }
+            }
 
             return criteriaPattern.find(chat)?.groupValues?.drop(1)
         }
@@ -166,7 +182,7 @@ class ChatTrigger(method: Any, type: ITriggerType) : Trigger(method, type) {
         if (startsWith != null) {
             val matcher = startsWith!!.find(chat) ?: return null
             start = matcher.range.last + 1
-            matcher.groupValues.drop(1).let { variables += it }
+            variables += matcher.groupValues.drop(1)
         }
 
         if (endsWith != null) {
@@ -185,13 +201,15 @@ class ChatTrigger(method: Any, type: ITriggerType) : Trigger(method, type) {
             if (matcher == null) return null
 
             end = subStart
-            matcher.groupValues.drop(1).let { variables += it }
+            variables += matcher.groupValues.drop(1)
         }
 
         for (contain in contains) {
-            contain.find(chat.substring(start, end))?.groupValues?.drop(1)?.let {
-                variables += it
-            } ?: return null
+            val matcher = contain.findAll(chat.substring(start, end)).toList()
+            if (matcher.isEmpty())
+                return null
+
+            variables += matcher.flatMap { it.groupValues.drop(1) }
         }
 
         return variables
